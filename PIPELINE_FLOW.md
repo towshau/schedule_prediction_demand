@@ -194,119 +194,60 @@ Risk flags give you a quick visual way to see which sessions need attention:
 
 ---
 
-## How the Model Learns Over Time
+## How Predictions Are Calculated
 
-### Understanding Continuous Learning
+### The Mathematical Model
 
-Every single day, when the pipeline runs at 2 AM AEST, the model gets a little bit smarter. Here's how that works in simple terms:
+The pipeline uses **Ridge Regression** to predict attendance. This is a type of linear model that finds the best relationship between features (input information) and attendance (what we want to predict).
 
-**Think of it like a student learning from experience:**
-- On Day 1, the model looks at all the historical attendance data you have (maybe months or years of records)
-- It finds patterns like "Monday morning PERFORM sessions usually have 8 people" or "Holiday weeks have lower attendance"
-- It uses these patterns to make predictions for the next 6 weeks
+### The Prediction Formula
 
-**But here's the important part - the model keeps learning:**
-- Every day, new attendance data gets added to your database (as members actually attend sessions)
-- The next time the pipeline runs (the next day at 2 AM), it includes this new data
-- The model sees what actually happened and compares it to what it predicted
-- It adjusts its understanding of patterns based on this new information
+The model calculates predictions using this mathematical equation:
 
-### What "Learning" Actually Means
+**Predicted Attendance = (w₁ × feature₁) + (w₂ × feature₂) + (w₃ × feature₃) + ... + (wₙ × featureₙ) + bias**
 
-When we say the model "learns," we mean it adjusts the mathematical relationships it uses to make predictions. Here's a concrete example:
+Where:
+- **w₁, w₂, w₃, ... wₙ** are weights (coefficients) that the model learns during training
+- **feature₁, feature₂, feature₃, ... featureₙ** are the input features for each session
+- **bias** is a base value the model adjusts
 
-**Week 1:**
-- The model might think: "Monday morning PERFORM sessions = 8 people on average"
-- It makes predictions based on this understanding
+### Features Used in Predictions
 
-**Week 2 (after seeing actual results):**
-- The model sees that Monday morning PERFORM sessions actually had 10 people last week
-- It adjusts its understanding: "Monday morning PERFORM sessions = maybe 9 people on average"
-- It doesn't completely forget the old pattern, but it updates it slightly based on new evidence
+The model uses these features to make predictions:
 
-**Week 3:**
-- The model sees more data and refines further
-- It might notice: "Actually, Monday morning PERFORM sessions in winter are different from summer"
-- It learns more nuanced patterns
+1. **Day of week** (7 features: Monday=1 if Monday, 0 otherwise, etc.)
+2. **Week of year** (1 feature: number from 1-52)
+3. **Holiday flag** (1 feature: 1 if holiday, 0 otherwise)
+4. **Lag-1 attendance** (1 feature: attendance at the previous occurrence of this session)
+5. **Rolling average (4 weeks)** (1 feature: average attendance over last 4 occurrences)
+6. **Rolling average (8 weeks)** (1 feature: average attendance over last 8 occurrences)
 
-### Why This Gets Better Over Time
+### How the Model Learns
 
-**More data = better patterns:**
-- In the first few weeks, the model only has a small amount of historical data
-- As time goes on, it accumulates more and more examples of what actually happens
-- With more examples, it can identify patterns more accurately
+During training, the model:
+1. Looks at all historical session data with actual attendance
+2. Finds the best weights (w₁, w₂, etc.) that minimize prediction error
+3. Uses Ridge regularization to prevent overfitting (keeps weights small)
+4. Produces a formula it can use to predict future attendance
 
-**Real-world changes get captured:**
-- If your business grows and more members join, the model will gradually see attendance numbers increase
-- If you change session times or add new session types, the model will learn the new patterns
-- If seasonal trends change (like summer vs winter attendance), the model adapts
+### Example Calculation
 
-**The model corrects its mistakes:**
-- If the model predicts 10 people but only 6 show up, it learns that maybe it was too optimistic
-- If it predicts 5 people but 12 show up, it learns it was too conservative
-- Over time, these corrections make the model more accurate
+For a Monday morning PERFORM session on week 15 (non-holiday) with:
+- Previous attendance: 8 people
+- 4-week average: 9 people
+- 8-week average: 8.5 people
 
-### How Long Does Learning Take?
+The model might calculate:
+- `(0.5 × Monday) + (0.1 × Week15) + (0 × Holiday) + (0.7 × Lag8) + (0.3 × Avg4) + (0.2 × Avg8) + 2.0`
+- `= (0.5 × 1) + (0.1 × 15) + (0 × 0) + (0.7 × 8) + (0.3 × 9) + (0.2 × 8.5) + 2.0`
+- `= 0.5 + 1.5 + 0 + 5.6 + 2.7 + 1.7 + 2.0 = 14.0 people`
 
-**Short term (first few weeks):**
-- The model is still getting familiar with your data
-- Predictions might be less accurate as it learns basic patterns
-- It's like a new employee learning the ropes
+*(Note: Actual weights are learned from your data and will be different)*
 
-**Medium term (first few months):**
-- The model has seen enough data to identify clear patterns
-- It understands day-of-week trends, session popularity, and basic seasonality
-- Predictions become more reliable
+### Model Improvement Over Time
 
-**Long term (6+ months):**
-- The model has seen full seasonal cycles (summer, winter, holidays, etc.)
-- It understands how attendance changes throughout the year
-- It can make more sophisticated predictions that account for multiple factors at once
-
-### What Happens When Patterns Change?
-
-**The model adapts automatically:**
-- If you notice attendance patterns are changing (maybe a session becomes more popular), you don't need to reprogram the model
-- Each day, as new data comes in, the model gradually shifts its predictions to match the new reality
-- It doesn't forget old patterns completely - it blends old and new information
-
-**Example scenario:**
-- For 6 months, Tuesday evening BOX sessions averaged 8 people
-- Suddenly, a popular coach starts teaching that session and attendance jumps to 15 people
-- The model doesn't know why this happened, but it sees the new pattern in the data
-- Over the next few weeks, as it sees more examples of 15 people attending, it adjusts its predictions upward
-- Eventually, it will predict around 15 people for that session
-
-### The Learning Process in Simple Steps
-
-1. **Collect new data:** Every day, actual attendance gets recorded in your database
-2. **Include in training:** The next time the pipeline runs, this new data becomes part of the historical dataset
-3. **Re-train the model:** The model looks at ALL the data (old + new) and finds the best patterns
-4. **Update predictions:** New forecasts are generated using the updated understanding
-5. **Repeat:** This cycle happens every single day, so the model is always using the most recent information
-
-### Why This Matters for Your Business
-
-**Accurate predictions improve over time:**
-- As the model learns, your forecasts become more reliable
-- You can make better decisions about capacity, staffing, and scheduling
-
-**The model adapts to your business:**
-- You don't need to manually update formulas or rules
-- The model automatically reflects changes in member behavior, seasonal trends, and business growth
-
-**You can trust the forecasts more:**
-- After the model has been running for several months, it has seen many examples of what actually happens
-- This gives you confidence that the predictions are based on real patterns, not guesswork
-
-### Important Note: The Model Doesn't Predict the Future Perfectly
-
-Even as the model learns and improves, it's important to understand that:
-- It predicts based on patterns it has seen before
-- If something completely unexpected happens (like a sudden surge in popularity), it might take a few days for the model to catch up
-- The model is a tool to help you plan, but you should always use your business judgment alongside the predictions
-
-**Think of it like weather forecasting:**
-- Weather models get better over time as they learn from past weather patterns
-- But they can't predict every single unexpected event perfectly
-- They're very useful for planning, but you still need to watch for unusual situations
+Each day when the pipeline runs:
+- New actual attendance data is added to the training dataset
+- The model re-trains using all available historical data
+- Updated weights are calculated that better match recent patterns
+- New forecasts use these improved weights, making predictions more accurate over time
