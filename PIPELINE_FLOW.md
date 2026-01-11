@@ -26,6 +26,10 @@ flowchart TD
     
     Save --> End([Complete<br/>6-week forecasts ready])
     
+    %% Learning Loop - Model improves over time
+    End -.->|Next Day<br/>New Data Added| Extract
+    Save -.->|Actual Results<br/>Become Training Data| Extract
+    
     style Start fill:#e1f5ff
     style Extract fill:#fff4e1
     style Aggregate fill:#fff4e1
@@ -187,3 +191,122 @@ Risk flags give you a quick visual way to see which sessions need attention:
 - **RED sessions** might need extra capacity or waitlist management
 - **GREEN sessions** have plenty of space and could potentially accept more bookings
 - **AMBER sessions** are in the watch zone - monitor closely
+
+---
+
+## How the Model Learns Over Time
+
+### Understanding Continuous Learning
+
+Every single day, when the pipeline runs at 2 AM AEST, the model gets a little bit smarter. Here's how that works in simple terms:
+
+**Think of it like a student learning from experience:**
+- On Day 1, the model looks at all the historical attendance data you have (maybe months or years of records)
+- It finds patterns like "Monday morning PERFORM sessions usually have 8 people" or "Holiday weeks have lower attendance"
+- It uses these patterns to make predictions for the next 6 weeks
+
+**But here's the important part - the model keeps learning:**
+- Every day, new attendance data gets added to your database (as members actually attend sessions)
+- The next time the pipeline runs (the next day at 2 AM), it includes this new data
+- The model sees what actually happened and compares it to what it predicted
+- It adjusts its understanding of patterns based on this new information
+
+### What "Learning" Actually Means
+
+When we say the model "learns," we mean it adjusts the mathematical relationships it uses to make predictions. Here's a concrete example:
+
+**Week 1:**
+- The model might think: "Monday morning PERFORM sessions = 8 people on average"
+- It makes predictions based on this understanding
+
+**Week 2 (after seeing actual results):**
+- The model sees that Monday morning PERFORM sessions actually had 10 people last week
+- It adjusts its understanding: "Monday morning PERFORM sessions = maybe 9 people on average"
+- It doesn't completely forget the old pattern, but it updates it slightly based on new evidence
+
+**Week 3:**
+- The model sees more data and refines further
+- It might notice: "Actually, Monday morning PERFORM sessions in winter are different from summer"
+- It learns more nuanced patterns
+
+### Why This Gets Better Over Time
+
+**More data = better patterns:**
+- In the first few weeks, the model only has a small amount of historical data
+- As time goes on, it accumulates more and more examples of what actually happens
+- With more examples, it can identify patterns more accurately
+
+**Real-world changes get captured:**
+- If your business grows and more members join, the model will gradually see attendance numbers increase
+- If you change session times or add new session types, the model will learn the new patterns
+- If seasonal trends change (like summer vs winter attendance), the model adapts
+
+**The model corrects its mistakes:**
+- If the model predicts 10 people but only 6 show up, it learns that maybe it was too optimistic
+- If it predicts 5 people but 12 show up, it learns it was too conservative
+- Over time, these corrections make the model more accurate
+
+### How Long Does Learning Take?
+
+**Short term (first few weeks):**
+- The model is still getting familiar with your data
+- Predictions might be less accurate as it learns basic patterns
+- It's like a new employee learning the ropes
+
+**Medium term (first few months):**
+- The model has seen enough data to identify clear patterns
+- It understands day-of-week trends, session popularity, and basic seasonality
+- Predictions become more reliable
+
+**Long term (6+ months):**
+- The model has seen full seasonal cycles (summer, winter, holidays, etc.)
+- It understands how attendance changes throughout the year
+- It can make more sophisticated predictions that account for multiple factors at once
+
+### What Happens When Patterns Change?
+
+**The model adapts automatically:**
+- If you notice attendance patterns are changing (maybe a session becomes more popular), you don't need to reprogram the model
+- Each day, as new data comes in, the model gradually shifts its predictions to match the new reality
+- It doesn't forget old patterns completely - it blends old and new information
+
+**Example scenario:**
+- For 6 months, Tuesday evening BOX sessions averaged 8 people
+- Suddenly, a popular coach starts teaching that session and attendance jumps to 15 people
+- The model doesn't know why this happened, but it sees the new pattern in the data
+- Over the next few weeks, as it sees more examples of 15 people attending, it adjusts its predictions upward
+- Eventually, it will predict around 15 people for that session
+
+### The Learning Process in Simple Steps
+
+1. **Collect new data:** Every day, actual attendance gets recorded in your database
+2. **Include in training:** The next time the pipeline runs, this new data becomes part of the historical dataset
+3. **Re-train the model:** The model looks at ALL the data (old + new) and finds the best patterns
+4. **Update predictions:** New forecasts are generated using the updated understanding
+5. **Repeat:** This cycle happens every single day, so the model is always using the most recent information
+
+### Why This Matters for Your Business
+
+**Accurate predictions improve over time:**
+- As the model learns, your forecasts become more reliable
+- You can make better decisions about capacity, staffing, and scheduling
+
+**The model adapts to your business:**
+- You don't need to manually update formulas or rules
+- The model automatically reflects changes in member behavior, seasonal trends, and business growth
+
+**You can trust the forecasts more:**
+- After the model has been running for several months, it has seen many examples of what actually happens
+- This gives you confidence that the predictions are based on real patterns, not guesswork
+
+### Important Note: The Model Doesn't Predict the Future Perfectly
+
+Even as the model learns and improves, it's important to understand that:
+- It predicts based on patterns it has seen before
+- If something completely unexpected happens (like a sudden surge in popularity), it might take a few days for the model to catch up
+- The model is a tool to help you plan, but you should always use your business judgment alongside the predictions
+
+**Think of it like weather forecasting:**
+- Weather models get better over time as they learn from past weather patterns
+- But they can't predict every single unexpected event perfectly
+- They're very useful for planning, but you still need to watch for unusual situations
