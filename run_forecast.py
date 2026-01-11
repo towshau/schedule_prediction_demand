@@ -155,7 +155,11 @@ def main():
         
         # Step 9: Calculate capacity and risk flags
         logger.info("\n[Step 9] Calculating capacity utilisation and risk flags...")
-        forecast_output = prepare_forecast_output(forecast_df, system_config_df)
+        forecast_output = prepare_forecast_output(
+            forecast_df, 
+            system_config_df,
+            attendance_df  # Pass attendance data to calculate coach counts
+        )
         
         # Step 10: Upsert to Supabase
         logger.info("\n[Step 10] Writing forecasts to Supabase...")
