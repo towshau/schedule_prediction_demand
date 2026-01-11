@@ -2,9 +2,10 @@ name: Daily Forecast Pipeline
 
 on:
   schedule:
-    # Run daily at 2:00 AM UTC (adjust timezone as needed)
-    # This assumes daily upload completes before 2 AM UTC
-    - cron: '0 2 * * *'
+    # Run daily at 2:00 AM AEST (16:00 UTC previous day)
+    # Note: During daylight saving (AEDT), this is 3 PM UTC (15:00 UTC)
+    # This assumes daily upload completes before 2 AM AEST
+    - cron: '0 16 * * *'
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
