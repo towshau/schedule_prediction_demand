@@ -1,296 +1,568 @@
-# Schedule Prediction Demand
+# Schedule Prediction & Management System
 
-Prediction engine to map demand of existing members and their behaviour patterns.
+A comprehensive gym management and forecasting system that predicts session attendance, manages coach schedules, tracks member health metrics, and facilitates coaching notes.
 
-This MVP forecasting pipeline predicts session attendance for the next 14 days using historical member attendance data, machine learning (Ridge regression), and various business rules.
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Database Schema](#database-schema)
+- [Forecasting Pipeline](#forecasting-pipeline)
+- [Setup & Installation](#setup--installation)
+- [Usage](#usage)
+- [Features](#features)
+
+---
 
 ## Overview
 
-The pipeline:
-1. Pulls historical attendance data from Supabase
-2. Aggregates member-level data to session occurrence level
-3. Builds features (temporal, holiday flags, lag/rolling averages)
-4. Trains a Ridge regression model with time-aware train/test split
-5. Generates 14-day forecasts for all session slots
-6. Applies member holds adjustments
-7. Calculates capacity utilization and risk flags
-8. Writes results back to Supabase
+This system provides:
 
-## Architecture
+1. **Session Attendance Forecasting** - ML-powered predictions for the next 6 weeks
+2. **Coach Schedule Management** - Track preferences and hard blocks
+3. **Member Health Tracking** - InBody metrics, weight, body fat, etc.
+4. **Coaching Notes** - Structured note-taking for member progress
+5. **Capacity Planning** - Risk flags and utilization monitoring
 
+---
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph "Data Sources"
+        A[Member Attendance]
+        B[Work Calendar]
+        C[Member Holds]
+        D[System Config]
+        E[Health Metrics]
+        F[Coach Preferences]
+    end
+    
+    subgraph "Processing Layer"
+        G[Data Extraction]
+        H[Aggregation]
+        I[Feature Engineering]
+        J[ML Model - Ridge Regression]
+    end
+    
+    subgraph "Application Layer"
+        K[Forecasting Engine]
+        L[Schedule Optimizer]
+        M[Health Dashboard]
+        N[Notes System]
+    end
+    
+    subgraph "Output"
+        O[14-Day Forecasts]
+        P[Coach Schedules]
+        Q[Member Reports]
+        R[Retool Dashboard]
+    end
+    
+    A --> G
+    B --> G
+    C --> G
+    D --> G
+    E --> M
+    F --> L
+    
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    
+    K --> O
+    L --> P
+    M --> Q
+    N --> Q
+    
+    O --> R
+    P --> R
+    Q --> R
+    R
+    
+    style A fill:#e1f5ff
+    style B fill:#e1f5ff
+    style C fill:#e1f5ff
+    style D fill:#e1f5ff
+    style E fill:#e1f5ff
+    style F fill:#e1f5ff
+    style J fill:#f3e5f5
+    style K fill:#fff9c4
+    style L fill:#fff9c4
+    style M fill:#fff9c4
+    style N fill:#fff9c4
+    style R fill:#e8f5e9
 ```
-Supabase Tables:
-├── member_daily_sessions_attended (data source)
-├── work_calendar (business days & holidays)
-├── member_holds (member hold periods)
-├── system_config (session capacities)
-└── session_forecast_next_14_days (output table)
+
+---
+
+## Database Schema
+
+### Core Tables Relationship
+
+```mermaid
+erDiagram
+    member_database ||--o{ member_memberships : "has"
+    member_database ||--o{ member_health_metrics : "tracks"
+    member_database ||--o{ member_coach_notes : "receives"
+    member_database ||--o{ member_holds : "has"
+    member_database ||--o{ member_daily_sessions_attended : "attends"
+    
+    staff_database ||--o{ member_memberships : "coaches"
+    staff_database ||--o{ member_coach_notes : "writes"
+    staff_database ||--o{ schedule_preferences : "submits"
+    
+    member_memberships ||--o{ membership_types : "has_type"
+    
+    schedule_preferences }o--|| schedule_periods : "for_period"
+    
+    member_database {
+        uuid id PK
+        text first_name
+        text last_name
+        date dob
+        text email
+        numeric initial_weight
+        numeric initial_BF_percentage
+    }
+    
+    member_health_metrics {
+        uuid id PK
+        uuid member_id FK
+        numeric weight
+        numeric bf
+        numeric bfm
+        numeric ffm
+        numeric smm
+        numeric bone_mineral_content
+        numeric visceral_fat_level
+        integer age
+        integer inbody_score
+        timestamp date_created
+    }
+    
+    member_coach_notes {
+        uuid id PK
+        uuid member_id FK
+        uuid coach_id FK
+        coach_notes_type note_type
+        text note_content
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    staff_database {
+        uuid id PK
+        text coach_name
+        text role
+        active_inactive staff_status
+        numeric rm_ceiling
+        text home_gym
+    }
+    
+    schedule_preferences {
+        uuid id PK
+        uuid staff_id FK
+        uuid period_id FK
+        text block
+        text preference_type
+        timestamp submitted_at
+    }
 ```
 
-## Setup
+### Forecasting Pipeline Tables
+
+```mermaid
+erDiagram
+    member_daily_sessions_attended ||--o{ session_forecast_next_14_days : "trains"
+    work_calendar ||--|| session_forecast_next_14_days : "validates"
+    system_config ||--|| session_forecast_next_14_days : "provides_capacity"
+    member_holds ||--|| session_forecast_next_14_days : "adjusts"
+    
+    member_daily_sessions_attended {
+        date session_date
+        time session_start
+        time session_end
+        text session_name
+        text coach_name
+        uuid member_id
+    }
+    
+    session_forecast_next_14_days {
+        date session_date
+        text session_name
+        time session_start
+        numeric predicted_attendance
+        numeric predicted_utilisation
+        text risk_flag
+        timestamp created_at
+    }
+    
+    work_calendar {
+        date the_date
+        boolean is_business_day
+        text holiday_name
+    }
+    
+    system_config {
+        text config_key
+        numeric capacity
+        text match_pattern
+    }
+    
+    member_holds {
+        uuid member_id
+        date hold_start
+        date hold_end
+    }
+```
+
+---
+
+## Forecasting Pipeline
+
+### High-Level Flow
+
+```mermaid
+flowchart TD
+    Start([Daily Trigger<br/>2 AM AEST]) --> Extract[Step 1: Extract Data<br/>Pull attendance, calendar,<br/>holds, and capacity data]
+    
+    Extract --> Aggregate[Step 2: Aggregate<br/>Session-level attendance counts]
+    
+    Aggregate --> Features[Step 3: Feature Engineering<br/>Add temporal, holiday,<br/>and lag features]
+    
+    Features --> Split[Step 4: Data Split<br/>Time-aware train/test split]
+    
+    Split --> Train[Step 5: Train Model<br/>Ridge Regression ML model]
+    
+    Train --> Evaluate[Step 6: Evaluate<br/>Measure prediction accuracy]
+    
+    Evaluate --> Forecast[Step 7: Generate Forecasts<br/>42-day predictions]
+    
+    Forecast --> Adjust[Step 8: Apply Holds<br/>Adjust for member absences]
+    
+    Adjust --> Risk[Step 9: Calculate Risk<br/>Utilization & risk flags]
+    
+    Risk --> Save[Step 10: Save Results<br/>Upsert to Supabase]
+    
+    Save --> End([6-Week Forecasts Ready])
+    
+    End -.->|Next Day| Extract
+    
+    style Start fill:#e1f5ff
+    style Extract fill:#fff4e1
+    style Aggregate fill:#fff4e1
+    style Features fill:#e8f5e9
+    style Split fill:#e8f5e9
+    style Train fill:#f3e5f5
+    style Evaluate fill:#f3e5f5
+    style Forecast fill:#fff9c4
+    style Adjust fill:#fff9c4
+    style Risk fill:#ffebee
+    style Save fill:#e1f5ff
+    style End fill:#e1f5ff
+```
+
+### Model Features
+
+```mermaid
+mindmap
+  root((Forecast<br/>Model))
+    Temporal
+      Day of Week
+      Week of Year
+    External
+      Holiday Flag
+      Business Day
+    Historical
+      Lag-1 Attendance
+      Rolling Avg 4-Week
+      Rolling Avg 8-Week
+    Capacity
+      Session Capacity
+      Coach Count
+    Adjustments
+      Member Holds
+      Session Patterns
+```
+
+### Risk Flag Calculation
+
+```mermaid
+flowchart LR
+    A[Predicted Attendance] --> B{Compare to Capacity}
+    B --> C{< 80%}
+    B --> D{80-95%}
+    B --> E{> 95%}
+    B --> F{No Capacity Data}
+    
+    C --> G[🟢 GREEN<br/>Low Risk]
+    D --> H[🟡 AMBER<br/>Medium Risk]
+    E --> I[🔴 RED<br/>High Risk]
+    F --> J[⚫ BLACK<br/>Unknown]
+    
+    style G fill:#c8e6c9
+    style H fill:#fff9c4
+    style I fill:#ffcdd2
+    style J fill:#e0e0e0
+```
+
+---
+
+## Setup & Installation
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- Supabase account with required tables
-- Access to Supabase Service Role Key
+- Python 3.10+
+- Supabase account
+- GitHub account (for automated runs)
 
-### Installation
+### Local Installation
 
-1. **Clone the repository** (if you haven't already):
-   ```bash
-   git clone https://github.com/towshau/schedule_prediction_demand.git
-   cd schedule_prediction_demand
-   ```
+```bash
+# Clone repository
+git clone https://github.com/towshau/schedule_prediction_supply.git
+cd schedule_prediction_supply
 
-2. **Create a virtual environment** (recommended):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Install dependencies
+pip install -r requirements.txt
 
-4. **Set up environment variables**:
-   
-   Create a `.env` file in the project root:
-   ```bash
-   # Copy from .env.example or create manually
-   SUPABASE_URL=your_supabase_project_url
-   SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-   ```
-   
-   Replace the placeholders with your actual Supabase credentials.
+# Configure environment
+cp .env.example .env
+# Edit .env with your credentials:
+# SUPABASE_URL=your_project_url
+# SUPABASE_SERVICE_ROLE_KEY=your_service_key
+```
 
-5. **Create the forecast table in Supabase**:
-   
-   Run the SQL script to create the output table:
-   ```bash
-   # Execute the SQL in your Supabase SQL editor
-   cat sql/create_forecast_table.sql
-   ```
-   
-   Or manually execute the contents of `sql/create_forecast_table.sql` in your Supabase dashboard.
+### Database Setup
+
+Run the SQL scripts to create required tables:
+
+```bash
+# Core tables
+cat sql/create_forecast_table.sql | supabase db execute
+cat sql/create_member_cardio_time_trials.sql | supabase db execute
+
+# Enums
+cat sql/create_cardio_timetrial_enum.sql | supabase db execute
+```
+
+### GitHub Actions Setup
+
+1. Go to repository Settings → Secrets
+2. Add secrets:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+3. Workflow runs daily at 2 AM UTC automatically
+
+---
 
 ## Usage
 
-### Running Locally
-
-Run the forecasting pipeline manually:
+### Run Forecast Manually
 
 ```bash
 python run_forecast.py
 ```
 
-The script will:
-- Extract data from Supabase
-- Train the model
-- Generate forecasts
-- Write results back to `session_forecast_next_14_days` table
+### Query Forecasts
 
-### Automated Daily Runs (GitHub Actions)
+```python
+from src.database import get_supabase_client
 
-The pipeline is configured to run automatically via GitHub Actions.
+client = get_supabase_client()
 
-**Setup GitHub Secrets:**
+# Get next 14 days of forecasts
+response = client.table('session_forecast_next_14_days')\
+    .select('*')\
+    .gte('session_date', 'today')\
+    .order('session_date')\
+    .execute()
 
-1. Go to your repository settings
-2. Navigate to Secrets and variables → Actions
-3. Add the following secrets:
-   - `SUPABASE_URL`: Your Supabase project URL
-   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role key
-
-**Workflow Schedule:**
-
-The workflow runs daily at 2:00 AM UTC (see `.github/workflows/daily_forecast.yml`). 
-
-To adjust the schedule, edit the cron expression:
-```yaml
-- cron: '0 2 * * *'  # Hour Minute Day Month DayOfWeek
+forecasts = response.data
 ```
 
-**Manual Trigger:**
+### Add Coach Notes
 
-You can also trigger the workflow manually:
-1. Go to Actions tab in GitHub
-2. Select "Daily Forecast Pipeline"
-3. Click "Run workflow"
-
-### Running with Cron (Alternative)
-
-If you prefer to run locally on a schedule:
-
-```bash
-# Edit crontab
-crontab -e
-
-# Add this line (runs daily at 2 AM)
-0 2 * * * cd /path/to/schedule_prediction_demand && /path/to/venv/bin/python run_forecast.py >> logs/forecast.log 2>&1
+```python
+# Via Retool or direct SQL
+INSERT INTO member_coach_notes (member_id, coach_id, note_type, note_content)
+VALUES (
+    'member-uuid',
+    'coach-uuid', 
+    'goal',
+    'Wants to hit 95kg squat by March'
+);
 ```
 
-## Database Schema
+---
 
-### Input Tables
+## Features
 
-**member_daily_sessions_attended:**
-- `session_date` (date)
-- `session_start` (time)
-- `session_end` (time)
-- `session_name` (text)
-- `coach_name` (text)
-- `member_id` (uuid)
-- One row per member attendance per session
+### 1. Session Forecasting
 
-**work_calendar:**
-- `the_date` (date)
-- `is_business_day` (boolean)
-- `holiday_name` (text, nullable)
+- **42-day predictions** for all session types
+- **ML-powered** using Ridge Regression
+- **Risk flags** (Green/Amber/Red/Black)
+- **Utilization tracking** (capacity %)
+- **Member hold adjustments**
 
-**member_holds:**
-- `member_id` (uuid)
-- `hold_start` (date)
-- `hold_end` (date, nullable)
+### 2. Coach Management
 
-**system_config:**
-- `config_key` (text)
-- `capacity` (numeric)
-- `match_pattern` (text) - Pattern to match session names (e.g., "PERFORM", "BOX", "VO2")
+- **Schedule preferences** (HARD blocks, soft preferences)
+- **Capacity planning** (RM ceiling tracking)
+- **Multi-gym support** (BLIGH, BRIDGE, etc.)
+- **Role-based filtering**
 
-### Output Table
+### 3. Member Health Tracking
 
-**session_forecast_next_14_days:**
-- `session_date` (date)
-- `session_name` (text)
-- `session_start` (time)
-- `session_end` (time, nullable)
-- `predicted_attendance` (numeric)
-- `predicted_utilisation` (numeric, nullable)
-- `risk_flag` (text) - Values: 'green', 'amber', 'red', 'black'
-- `created_at` (timestamp)
-- Unique constraint on `(session_date, session_name, session_start)`
+- **InBody metrics** (weight, BF%, muscle mass, etc.)
+- **Progress tracking** over time
+- **Initial vs current** comparisons
+- **Plotly visualizations** in Retool
+
+### 4. Coaching Notes
+
+- **Structured note types** (goal, habits, general, other)
+- **Timestamped entries**
+- **Coach attribution**
+- **Full history tracking**
+
+### 5. Analytics & Reporting
+
+- **View by coach** - member counts, capacity
+- **View by member** - health trends, notes
+- **Calendar integration** - schedule visualization
+- **Export capabilities**
+
+---
 
 ## Model Details
 
-### Features
+### Algorithm: Ridge Regression
 
-The model uses the following features:
+- **Type:** Linear regression with L2 regularization
+- **Alpha:** 1.0 (prevents overfitting)
+- **Training:** Time-aware split (last 30 days = test)
+- **Features:** 13 total (temporal + lag + rolling averages)
 
-1. **Temporal Features:**
-   - `day_of_week`: Day of week (0=Monday, 6=Sunday)
-   - `week_of_year`: Week number in year
+### Performance Metrics
 
-2. **Holiday Feature:**
-   - `is_holiday`: Boolean flag (true if non-business day or holiday)
+- **MAE** (Mean Absolute Error) - logged after each run
+- **RMSE** (Root Mean Squared Error) - measure of variance
+- **R²** (Coefficient of Determination) - model fit quality
 
-3. **Lag Features:**
-   - `lag_1_attendance`: Previous occurrence's attendance for the same session slot
-   - `rolling_avg_4`: Rolling average of last 4 occurrences
-   - `rolling_avg_8`: Rolling average of last 8 occurrences
+### Continuous Improvement
 
-**Data Leakage Prevention:** All lag/rolling features use only prior data (via `.shift()` and proper windowing). The training/test split is time-aware (no random shuffling).
+The model retrains daily with:
+- ✅ New attendance data
+- ✅ Updated member patterns
+- ✅ Recent hold information
+- ✅ Seasonal adjustments
 
-### Model
-
-- **Algorithm:** Ridge Regression (L2 regularization)
-- **Alpha:** 1.0 (regularization strength)
-- **Train/Test Split:** Last 30 days used for testing (time-aware, no random split)
-
-### Risk Flags
-
-Risk flags are calculated based on predicted utilization:
-
-- **green:** utilisation < 0.80 (low risk)
-- **amber:** utilisation 0.80 - 0.95 (medium risk)
-- **red:** utilisation > 0.95 (high risk)
-- **black:** capacity data missing (unknown risk)
-
-### Member Holds Adjustment
-
-For MVP, the pipeline uses a simple aggregate approach:
-- Counts all members on hold per forecast date
-- Subtracts this count from predicted attendance for ALL sessions on that date
-
-This over-adjusts (assumes held members would attend all sessions) but is acceptable for MVP. Future enhancement: Track which sessions each member typically attends.
+---
 
 ## Project Structure
 
 ```
 Schedule/
-├── README.md
-├── requirements.txt
-├── .env                    # Create this with your Supabase credentials
+├── README.md                       # This file
+├── PIPELINE_FLOW.md               # Detailed pipeline docs
+├── requirements.txt               # Python dependencies
+├── .env                          # Environment variables (create this)
+├── .env.example                  # Template
 ├── .gitignore
+│
 ├── .github/
 │   └── workflows/
-│       └── daily_forecast.yml
+│       └── daily_forecast.yml    # Automated daily runs
+│
 ├── sql/
-│   └── create_forecast_table.sql
+│   ├── create_forecast_table.sql
+│   ├── create_member_cardio_time_trials.sql
+│   └── create_cardio_timetrial_enum.sql
+│
 ├── src/
 │   ├── __init__.py
-│   ├── config.py           # Configuration management
-│   ├── database.py         # Supabase client and DB operations
-│   ├── data_extraction.py  # Data extraction from Supabase
-│   ├── aggregation.py      # Session-level aggregation
-│   ├── feature_engineering.py  # Feature creation
-│   ├── model_training.py   # Model training and evaluation
-│   ├── forecasting.py      # Forecast generation
-│   └── data_loading.py     # Capacity matching and risk flags
-└── run_forecast.py         # Main orchestration script
+│   ├── config.py                  # Configuration management
+│   ├── database.py                # Supabase operations
+│   ├── data_extraction.py         # Data pull from Supabase
+│   ├── aggregation.py             # Session-level aggregation
+│   ├── feature_engineering.py     # ML feature creation
+│   ├── model_training.py          # Ridge regression training
+│   ├── forecasting.py             # Prediction generation
+│   └── data_loading.py            # Risk flags & capacity
+│
+└── run_forecast.py                # Main pipeline orchestrator
 ```
+
+---
 
 ## Troubleshooting
 
-### Missing Environment Variables
+### Common Issues
 
-If you see errors about missing environment variables:
-- Ensure `.env` file exists in project root
-- Verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set correctly
+| Issue | Solution |
+|-------|----------|
+| Missing environment variables | Check `.env` file exists with correct values |
+| Database connection fails | Verify Supabase URL and service key |
+| Model accuracy poor | Ensure 2-3 months of historical data available |
+| Forecast dates missing | Check `work_calendar` has future dates |
+| GitHub Actions fail | Verify secrets are set in repository settings |
 
-### Missing Database Columns
+### Logging
 
-If you see validation errors about missing columns:
-- Verify all required tables exist in Supabase
-- Check that table schemas match the expected columns (see Database Schema section)
+All operations are logged:
+```bash
+# View logs
+tail -f logs/forecast.log
 
-### Model Performance
+# Or check GitHub Actions logs in the Actions tab
+```
 
-If model predictions seem inaccurate:
-- Check that you have sufficient historical data (at least 2-3 months recommended)
-- Verify lag features are being calculated correctly (check logs)
-- Consider adjusting `RIDGE_ALPHA` in `src/config.py` for stronger/weaker regularization
-
-### GitHub Actions Failures
-
-If the workflow fails:
-- Check Actions tab for error logs
-- Verify GitHub Secrets are set correctly
-- Ensure the workflow file path is correct (`.github/workflows/daily_forecast.yml`)
-
-## Logging
-
-The pipeline logs important information at each step:
-- Row counts at each stage
-- Model training metrics (MAE, RMSE)
-- Risk flag distribution
-- Forecast summary statistics
-
-Logs are written to stdout and can be captured in GitHub Actions logs or redirected to a file.
+---
 
 ## Future Enhancements
 
-- Member-level session preference tracking (for more accurate hold adjustments)
-- Additional features (e.g., coach-specific patterns, seasonal trends)
-- Model retraining schedule optimization
-- Forecast confidence intervals
-- A/B testing framework for model improvements
+- [ ] Coach-specific prediction models
+- [ ] Seasonal pattern detection
+- [ ] Real-time attendance tracking
+- [ ] Automated waitlist management
+- [ ] Member journey stage forecasting
+- [ ] Advanced scheduling optimization
+- [ ] Mobile app integration
 
-## License
-
-[Add your license here]
+---
 
 ## Contributing
 
-[Add contribution guidelines here]
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/YourFeature`)
+3. Commit changes (`git commit -m 'Add YourFeature'`)
+4. Push to branch (`git push origin feature/YourFeature`)
+5. Open Pull Request
+
+---
+
+## License
+
+[MIT License](LICENSE)
+
+---
+
+## Support
+
+For issues or questions:
+- 📧 Email: [your-email]
+- 💬 Slack: [your-slack-channel]
+- 📝 Issues: [GitHub Issues](https://github.com/towshau/schedule_prediction_supply/issues)
+
+---
+
+**Built with ❤️ for better gym management**
